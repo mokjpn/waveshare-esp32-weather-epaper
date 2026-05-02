@@ -11,10 +11,6 @@ This repository targets:
 - Japan Meteorological Agency weather map source data
 - A small Python relay server that prepares panel-ready packed bitmap data
 
-The older `M5Capsule` / `M5StickC Plus` + `Unit NFC` proof-of-concept remains in
-the source tree for reference, but the working target is the Waveshare ESP32
-driver board.
-
 ## What It Does
 
 1. Wakes on schedule.
@@ -132,9 +128,6 @@ e-paper 表示機用ファームウェア、リレーサーバー、3Dプリン�
   `X02R/171213-180502`
 - 気象庁の天気図データ
 - パネルにそのまま送れるビットマップへ変換する Python リレーサーバー
-
-`M5Capsule` / `M5StickC Plus` + `Unit NFC` の試作コードも参考用に残していますが、
-現在の実用ターゲットは Waveshare ESP32 ドライバーボードです。
 
 ## 機能
 

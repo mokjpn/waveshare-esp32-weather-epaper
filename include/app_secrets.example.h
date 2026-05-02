@@ -11,5 +11,4 @@
 #define APP_MQTT_PORT 1883
 #define APP_MQTT_USERNAME ""
 #define APP_MQTT_PASSWORD ""
-#define APP_MQTT_TOPIC_BASE "devices/m5capsule-weather-epaper"
-
+#define APP_MQTT_TOPIC_BASE "devices/waveshare-esp32-weather-epaper"

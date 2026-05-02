@@ -7,14 +7,12 @@
 #include <vector>
 #include <time.h>
 #include "app_config.h"
+#if __has_include("app_secrets.h")
 #include "app_secrets.h"
-#if defined(APP_WAVESHARE_ESP32_DRIVER)
-#include "WaveshareEsp32Epaper.hpp"
 #else
-#include <M5Unified.h>
-#include "UnitNfcTransport.hpp"
-#include "WaveshareNfcEpaper.hpp"
+#include "app_secrets.example.h"
 #endif
+#include "WaveshareEsp32Epaper.hpp"
 
 namespace {
 
@@ -29,28 +27,12 @@ struct Manifest {
 
 WiFiClient wifiClient;
 PubSubClient mqttClient(wifiClient);
-#if defined(APP_WAVESHARE_ESP32_DRIVER)
 WaveshareEsp32Epaper epaper;
-#else
-UnitNfcTransport nfcTransport;
-WaveshareNfcEpaper epaper(nfcTransport);
-#endif
-
-#if !defined(APP_WAVESHARE_ESP32_DRIVER)
-const char* transportModeName(app::TransportMode mode)
-{
-    return (mode == app::TransportMode::NFCA) ? "NFCA" : "NFCV";
-}
-#endif
 
 void beep(uint16_t freq, uint32_t duration)
 {
-#if defined(APP_WAVESHARE_ESP32_DRIVER)
     (void)freq;
     (void)duration;
-#else
-    M5.Speaker.tone(freq, duration);
-#endif
 }
 
 void setStatusLed(bool on)
@@ -316,7 +298,6 @@ time_t computeNextSchedule(time_t nowEpoch)
     Serial.printf("[sleep] %u seconds\n", static_cast<unsigned>(seconds));
     setStatusLed(false);
     delay(100);
-#if defined(APP_WAVESHARE_ESP32_DRIVER)
     mqttClient.disconnect();
     WiFi.disconnect(true);
     WiFi.mode(WIFI_OFF);
@@ -324,9 +305,6 @@ time_t computeNextSchedule(time_t nowEpoch)
     Serial.flush();
     esp_sleep_enable_timer_wakeup(static_cast<uint64_t>(seconds) * 1000000ULL);
     esp_deep_sleep_start();
-#else
-    M5.Power.timerSleep(seconds);
-#endif
     while (true) {
         delay(1000);
     }
@@ -352,17 +330,11 @@ time_t computeNextSchedule(time_t nowEpoch)
 
 bool beginDevice()
 {
-#if defined(APP_WAVESHARE_ESP32_DRIVER)
     beginStatusLed();
     return true;
-#else
-    auto cfg = M5.config();
-    M5.begin(cfg);
-    return true;
-#endif
 }
 
-#if defined(APP_WAVESHARE_ESP32_DRIVER) && defined(APP_EPD_DIAGNOSTIC)
+#if defined(APP_EPD_DIAGNOSTIC)
 std::vector<uint8_t> makeDiagnosticImage()
 {
     std::vector<uint8_t> image(app::kPackedImageBytes, 0xFF);
@@ -407,7 +379,6 @@ bool performUpdate()
         return false;
     }
 
-#if defined(APP_WAVESHARE_ESP32_DRIVER)
     auto result = epaper.writeImage(image);
     StaticJsonDocument<512> updateInfo;
     updateInfo["source_url"] = manifest.sourceUrl;
@@ -425,119 +396,9 @@ bool performUpdate()
     Serial.println("[epd] update complete");
     beep(3000, 120);
     return true;
-#else
-    if (!nfcTransport.begin(app::kPreferredTransportMode)) {
-        return false;
-    }
-
-    auto detection = nfcTransport.detect();
-    app::TransportMode detectedMode = app::kPreferredTransportMode;
-    if (detection.found && detectedMode == app::TransportMode::NFCA) {
-        Serial.println("[nfc] panel detected in NFCA; keeping mode for update");
-    } else if (!detection.found && app::kTryAlternateTransportMode) {
-        const auto alternateMode =
-            (app::kPreferredTransportMode == app::TransportMode::NFCA) ? app::TransportMode::NFCV : app::TransportMode::NFCA;
-        Serial.printf("[nfc] no panel with %s, trying %s\n", transportModeName(app::kPreferredTransportMode),
-                      transportModeName(alternateMode));
-        if (nfcTransport.switchMode(alternateMode)) {
-            delay(100);
-            detection = nfcTransport.detect();
-            detectedMode = alternateMode;
-        }
-    }
-    if (!detection.found && app::kNfcFieldWarmupMs > 0) {
-        Serial.println("[nfc] trying field warmup detection");
-        detection = nfcTransport.detectAfterFieldWarmup(app::kPreferredTransportMode, app::kNfcFieldWarmupMs);
-        detectedMode = app::kPreferredTransportMode;
-        if (!detection.found && app::kTryAlternateTransportMode) {
-            const auto alternateMode =
-                (app::kPreferredTransportMode == app::TransportMode::NFCA) ? app::TransportMode::NFCV : app::TransportMode::NFCA;
-            detection = nfcTransport.detectAfterFieldWarmup(alternateMode, app::kNfcFieldWarmupMs);
-            detectedMode = alternateMode;
-        }
-    }
-    if (!detection.found) {
-        nfcTransport.scanOtherModesForDiagnostics();
-        Serial.println("[epd] panel not detected");
-        return false;
-    }
-
-    auto result = epaper.writeImage(image);
-    StaticJsonDocument<512> updateInfo;
-    updateInfo["panel_code"] = result.panelCodeTried;
-    updateInfo["uid"]        = detection.uid;
-    updateInfo["type"]       = detection.type;
-    updateInfo["transport"]  = transportModeName(detectedMode);
-    updateInfo["source_url"] = manifest.sourceUrl;
-    updateInfo["published"]  = manifest.sourcePublishedAt;
-
-    if (!result.ok) {
-        publishEvent("epaper_update", "error", result.message, &updateInfo);
-        Serial.printf("[epd] update failed: %s\n", result.message.c_str());
-        Serial.printf("[nfc] failure cooldown ms=%u\n", static_cast<unsigned>(app::kNfcFailureCooldownMs));
-        nfcTransport.deactivate();
-        delay(app::kNfcFailureCooldownMs);
-        return false;
-    }
-
-    publishEvent("epaper_update", "ok", result.message, &updateInfo);
-    Serial.println("[epd] update complete");
-    beep(3000, 120);
-    return true;
-#endif
 }
 
 }  // namespace
-
-#if defined(APP_NFC_DIAGNOSTIC)
-
-void setup()
-{
-    Serial.begin(115200);
-    delay(300);
-    beginDevice();
-    setStatusLed(true);
-
-    Serial.printf("\n[%s] NFC diagnostic firmware=%s\n", app::kDeviceName, app::kFirmwareVersion);
-    Serial.println("[diag] Fast scan NFCA/NFCV only. Move the antenna slowly over the target.");
-    beep(2200, 40);
-
-    if (!nfcTransport.begin(app::TransportMode::NFCA)) {
-        Serial.println("[diag] Unit NFC begin failed");
-    }
-}
-
-void loop()
-{
-    M5.update();
-    bool found = false;
-
-    if (nfcTransport.switchMode(app::TransportMode::NFCA)) {
-        auto result = nfcTransport.detect();
-        found       = result.found || found;
-    }
-    if (found) {
-        Serial.println("[diag] target found in NFCA; holding mode briefly");
-        beep(3000, 80);
-        delay(1200);
-        return;
-    }
-
-    if (nfcTransport.switchMode(app::TransportMode::NFCV)) {
-        auto result = nfcTransport.detect();
-        found       = result.found || found;
-    }
-
-    if (found) {
-        Serial.println("[diag] target found in NFCV; holding mode briefly");
-        beep(3000, 80);
-        delay(1200);
-        return;
-    }
-    delay(80);
-}
-
-#else
 
 void setup()
 {
@@ -549,7 +410,7 @@ void setup()
     Serial.printf("\n[%s] boot firmware=%s\n", app::kDeviceName, app::kFirmwareVersion);
     beep(2200, 40);
 
-#if defined(APP_WAVESHARE_ESP32_DRIVER) && defined(APP_EPD_DIAGNOSTIC)
+#if defined(APP_EPD_DIAGNOSTIC)
     runEpdDiagnostic();
 #endif
 
@@ -571,11 +432,6 @@ void setup()
 
 void loop()
 {
-#if !defined(APP_WAVESHARE_ESP32_DRIVER)
-    M5.update();
-#endif
     mqttClient.loop();
     delay(10);
 }
-
-#endif

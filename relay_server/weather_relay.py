@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Relay server for M5Capsule weather-map e-paper firmware.
+"""Relay server for Waveshare ESP32 weather-map e-paper firmware.
 
 The firmware expects two endpoints:
 
@@ -158,7 +158,7 @@ class WeatherMapRelay:
         request = urllib.request.Request(
             url,
             headers={
-                "User-Agent": "m5capsule-weather-epaper-relay/0.1",
+                "User-Agent": "waveshare-esp32-weather-epaper-relay/0.1",
                 "Accept": "*/*",
             },
         )
@@ -397,7 +397,7 @@ class RelayRequestHandler(BaseHTTPRequestHandler):
 
 
 def parse_args() -> RelayConfig:
-    parser = argparse.ArgumentParser(description="JMA weather-map relay for M5Capsule e-paper firmware")
+    parser = argparse.ArgumentParser(description="JMA weather-map relay for Waveshare ESP32 e-paper firmware")
     parser.add_argument("--bind", default=os.environ.get("JMA_RELAY_BIND", "0.0.0.0"))
     parser.add_argument("--port", type=int, default=int(os.environ.get("JMA_RELAY_PORT", "8080")))
     parser.add_argument(
