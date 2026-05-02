@@ -1,0 +1,7 @@
+.pio/
+.vscode/
+include/app_secrets.h
+relay_server/.venv/
+relay_server/cache/
+__pycache__/
+*.pyc
