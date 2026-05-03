@@ -28,12 +28,13 @@ This PoC targets these hardware and runtime assumptions.
 
 The schedule is fixed in JST.
 
-- 00:00
-- 06:00
-- 12:00
-- 18:00
+- 00:30
+- 06:30
+- 12:30
+- 18:30
 
-Failures currently retry after 5 minutes.
+Wi-Fi and relay image-fetch failures retry after 10 minutes. Other update failures retry after 5 minutes. MQTT failures are non-fatal.
+The relay's default upstream/render cache TTL is 300 seconds.
 
 ## Relay Server Contract
 
@@ -50,6 +51,9 @@ Expected JSON:
 {
   "image_path": "/api/weather-map/latest.bin",
   "source_url": "https://www.jma.go.jp/bosai/weather_map/",
+  "source_image_url": "https://www.jma.go.jp/bosai/weather_map/data/png/...",
+  "source_area": "near_monochrome",
+  "source_kind": "now",
   "source_published_at": "2026-04-17T12:00:00+00:00",
   "display_label": "JMA weather map 2026-04-17 21:00 JST",
   "etag": "optional-version-string",
@@ -57,7 +61,7 @@ Expected JSON:
   "height": 384,
   "bytes": 61440,
   "planes": ["black", "red"],
-  "renderer_version": "red-timestamp-utc-v1"
+  "renderer_version": "red-timestamp-utc-v2-near-monochrome"
 }
 ```
 
@@ -77,7 +81,7 @@ Expected payload:
 
 The relay server should transform the JMA image like this.
 
-1. Use the latest published `日本周辺域 実況天気図`.
+1. Use the latest published `near_monochrome.now` `日本周辺域 実況天気図`.
 2. Scale to width `640` while preserving aspect ratio.
 3. Keep the image center fixed.
 4. Crop vertically to `384` pixels.

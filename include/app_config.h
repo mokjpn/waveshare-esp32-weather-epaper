@@ -16,6 +16,7 @@ constexpr bool kStatusLedEnabled              = true;
 constexpr int8_t kStatusLedPin                = 2;  // Waveshare driver board LED1
 constexpr bool kStatusLedActiveHigh           = true;
 constexpr uint32_t kRetryDelaySeconds         = 5 * 60;
+constexpr uint32_t kNetworkRetryDelaySeconds  = 10 * 60;
 constexpr uint32_t kEpdBusyTimeoutMs          = 120000;
 constexpr bool kEpdClearBeforeUpdate =
 #if defined(APP_EPD_7IN5BC)
@@ -51,6 +52,7 @@ constexpr uint32_t kImagePayloadBytes =
 constexpr bool kMqttEnabled                   = true;
 
 constexpr int kScheduleHours[] = {0, 6, 12, 18};
+constexpr int kScheduleMinute = 30;
 
 constexpr char kManifestPath[] = "/api/weather-map/latest.json";
 

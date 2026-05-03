@@ -25,6 +25,12 @@ struct Manifest {
     uint16_t height{};
 };
 
+enum class UpdateResult : uint8_t {
+    Ok,
+    RelayFetchFailed,
+    EpaperUpdateFailed,
+};
+
 WiFiClient wifiClient;
 PubSubClient mqttClient(wifiClient);
 WaveshareEsp32Epaper epaper;
@@ -277,7 +283,7 @@ time_t computeNextSchedule(time_t nowEpoch)
     for (auto hour : app::kScheduleHours) {
         struct tm candidate = nowTm;
         candidate.tm_hour   = hour;
-        candidate.tm_min    = 0;
+        candidate.tm_min    = app::kScheduleMinute;
         candidate.tm_sec    = 0;
         auto epoch          = mktime(&candidate);
         if (epoch > nowEpoch + 30) {
@@ -288,7 +294,7 @@ time_t computeNextSchedule(time_t nowEpoch)
     struct tm nextDay = nowTm;
     nextDay.tm_mday += 1;
     nextDay.tm_hour = app::kScheduleHours[0];
-    nextDay.tm_min  = 0;
+    nextDay.tm_min  = app::kScheduleMinute;
     nextDay.tm_sec  = 0;
     return mktime(&nextDay);
 }
@@ -328,6 +334,13 @@ time_t computeNextSchedule(time_t nowEpoch)
     goSleepSeconds(app::kRetryDelaySeconds);
 }
 
+[[noreturn]] void retryLater(const String& reason, uint32_t seconds)
+{
+    Serial.printf("[retry] %s\n", reason.c_str());
+    publishEvent("retry", "error", reason);
+    goSleepSeconds(seconds);
+}
+
 bool beginDevice()
 {
     beginStatusLed();
@@ -361,11 +374,11 @@ std::vector<uint8_t> makeDiagnosticImage()
 }
 #endif
 
-bool performUpdate()
+UpdateResult performUpdate()
 {
     Manifest manifest;
     if (!fetchManifest(manifest)) {
-        return false;
+        return UpdateResult::RelayFetchFailed;
     }
 
     StaticJsonDocument<512> meta;
@@ -376,7 +389,7 @@ bool performUpdate()
 
     std::vector<uint8_t> image;
     if (!fetchPackedImage(manifest, image)) {
-        return false;
+        return UpdateResult::RelayFetchFailed;
     }
 
     auto result = epaper.writeImage(image);
@@ -389,13 +402,13 @@ bool performUpdate()
     if (!result.ok) {
         publishEvent("epaper_update", "error", result.message, &updateInfo);
         Serial.printf("[epd] update failed: %s\n", result.message.c_str());
-        return false;
+        return UpdateResult::EpaperUpdateFailed;
     }
 
     publishEvent("epaper_update", "ok", result.message, &updateInfo);
     Serial.println("[epd] update complete");
     beep(3000, 120);
-    return true;
+    return UpdateResult::Ok;
 }
 
 }  // namespace
@@ -415,15 +428,19 @@ void setup()
 #endif
 
     if (!connectWifi()) {
-        retryLater("wifi connect failed");
+        retryLater("wifi connect failed", app::kNetworkRetryDelaySeconds);
     }
     connectMqtt();
     if (!syncTime()) {
         retryLater("time sync failed");
     }
 
-    if (!performUpdate()) {
-        retryLater("update flow failed");
+    const auto updateResult = performUpdate();
+    if (updateResult == UpdateResult::RelayFetchFailed) {
+        retryLater("relay image fetch failed", app::kNetworkRetryDelaySeconds);
+    }
+    if (updateResult == UpdateResult::EpaperUpdateFailed) {
+        retryLater("epaper update failed");
     }
 
     publishEvent("sleep", "ok", "sleep until next schedule");

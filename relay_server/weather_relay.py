@@ -44,7 +44,9 @@ MANIFEST_PATH = "/api/weather-map/latest.json"
 BINARY_PATH = "/api/weather-map/latest.bin"
 JST = dt.timezone(dt.timedelta(hours=9))
 UTC = dt.timezone.utc
-RENDERER_VERSION = "red-timestamp-utc-v1"
+JMA_SOURCE_AREA = "near_monochrome"
+JMA_SOURCE_KIND = "now"
+RENDERER_VERSION = "red-timestamp-utc-v2-near-monochrome"
 
 
 @dataclass(frozen=True)
@@ -124,6 +126,8 @@ class WeatherMapRelay:
             "image_path": BINARY_PATH,
             "source_url": SOURCE_PAGE_URL,
             "source_image_url": image_url,
+            "source_area": JMA_SOURCE_AREA,
+            "source_kind": JMA_SOURCE_KIND,
             "source_published_at": published_at,
             "display_label": label or "",
             "etag": digest[:16],
@@ -139,16 +143,16 @@ class WeatherMapRelay:
     def _latest_jma_filename(self) -> str:
         payload = self._http_get(JMA_LIST_URL)
         data = json.loads(payload.decode("utf-8"))
-        filenames = data.get("near", {}).get("now", [])
+        filenames = data.get(JMA_SOURCE_AREA, {}).get(JMA_SOURCE_KIND, [])
         if not isinstance(filenames, list) or not filenames:
-            raise RuntimeError("JMA list did not contain near.now filenames")
+            raise RuntimeError(f"JMA list did not contain {JMA_SOURCE_AREA}.{JMA_SOURCE_KIND} filenames")
         valid_filenames = [
             filename
             for filename in filenames
             if isinstance(filename, str) and "/" not in filename and filename.endswith(".png")
         ]
         if not valid_filenames:
-            raise RuntimeError("JMA list did not contain valid near.now PNG filenames")
+            raise RuntimeError(f"JMA list did not contain valid {JMA_SOURCE_AREA}.{JMA_SOURCE_KIND} PNG filenames")
         filename = max(valid_filenames, key=filename_sort_key)
         if not isinstance(filename, str) or "/" in filename or not filename.endswith(".png"):
             raise RuntimeError(f"unexpected JMA weather map filename: {filename!r}")
@@ -405,7 +409,7 @@ def parse_args() -> RelayConfig:
         type=Path,
         default=Path(os.environ.get("JMA_RELAY_CACHE_DIR", Path(__file__).with_name("cache"))),
     )
-    parser.add_argument("--cache-seconds", type=int, default=int(os.environ.get("JMA_RELAY_CACHE_SECONDS", "3600")))
+    parser.add_argument("--cache-seconds", type=int, default=int(os.environ.get("JMA_RELAY_CACHE_SECONDS", "300")))
     parser.add_argument("--threshold", type=int, default=int(os.environ.get("JMA_RELAY_THRESHOLD", "200")))
     parser.add_argument("--timeout-seconds", type=int, default=int(os.environ.get("JMA_RELAY_TIMEOUT_SECONDS", "20")))
     parser.add_argument("--image-width", type=int, default=int(os.environ.get("JMA_RELAY_IMAGE_WIDTH", str(DEFAULT_IMAGE_WIDTH))))

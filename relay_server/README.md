@@ -39,7 +39,7 @@ Command-line flags can also be supplied through environment variables.
 | `--bind` | `JMA_RELAY_BIND` | `0.0.0.0` |
 | `--port` | `JMA_RELAY_PORT` | `8080` |
 | `--cache-dir` | `JMA_RELAY_CACHE_DIR` | `relay_server/cache` |
-| `--cache-seconds` | `JMA_RELAY_CACHE_SECONDS` | `3600` |
+| `--cache-seconds` | `JMA_RELAY_CACHE_SECONDS` | `300` |
 | `--threshold` | `JMA_RELAY_THRESHOLD` | `200` |
 | `--timeout-seconds` | `JMA_RELAY_TIMEOUT_SECONDS` | `20` |
 | `--image-width` | `JMA_RELAY_IMAGE_WIDTH` | `640` |
@@ -59,10 +59,11 @@ panel. The relay also draws the source time into the red plane by default,
 converting the UTC timestamp in the JMA image filename to JST, for example
 `JMA weather map 2026-05-01 21:00 JST`.
 
-The server fetches:
+The server fetches the JMA monochrome near-Japan current weather map:
 
 - `https://www.jma.go.jp/bosai/weather_map/data/list.json`
-- `https://www.jma.go.jp/bosai/weather_map/data/png/<latest near.now png>`
+- `near_monochrome.now` from that list
+- `https://www.jma.go.jp/bosai/weather_map/data/png/<latest near_monochrome.now png>`
 
 If a refresh fails but a valid cached image exists, the server returns the
 cached image.

@@ -1,6 +1,13 @@
 .pio/
 .vscode/
+.DS_Store
 include/app_secrets.h
+AGENTS.md
+AGNETS.md
+HANDOFF.md
+cad/waveshare_7in5b_back_battery.3mf
+lib/UnitNfcTransport/
+lib/WaveshareNfcEpaper/
 relay_server/.venv/
 relay_server/cache/
 __pycache__/
