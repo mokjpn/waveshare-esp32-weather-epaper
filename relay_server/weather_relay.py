@@ -7,8 +7,8 @@ The firmware expects two endpoints:
   GET /api/weather-map/latest.bin
 
 This server fetches the latest JMA "near / now" weather map, resizes it to the
-configured panel size, converts it to packed 1bpp MSB-first bytes, and caches
-the result.
+configured panel size, converts it to the configured display payload format,
+and caches the result.
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ import datetime as dt
 import hashlib
 import io
 import json
+import logging
 import os
 import re
 import time
@@ -38,15 +39,19 @@ JMA_LIST_URL = "https://www.jma.go.jp/bosai/weather_map/data/list.json"
 JMA_IMAGE_BASE_URL = "https://www.jma.go.jp/bosai/weather_map/data/png"
 SOURCE_PAGE_URL = "https://www.jma.go.jp/bosai/weather_map/"
 
-DEFAULT_IMAGE_WIDTH = 640
-DEFAULT_IMAGE_HEIGHT = 384
+DEFAULT_IMAGE_WIDTH = 800
+DEFAULT_IMAGE_HEIGHT = 480
+LEGACY_BC_IMAGE_WIDTH = 640
+LEGACY_BC_IMAGE_HEIGHT = 384
 MANIFEST_PATH = "/api/weather-map/latest.json"
 BINARY_PATH = "/api/weather-map/latest.bin"
 JST = dt.timezone(dt.timedelta(hours=9))
 UTC = dt.timezone.utc
 JMA_SOURCE_AREA = "near_monochrome"
 JMA_SOURCE_KIND = "now"
-RENDERER_VERSION = "red-timestamp-utc-v2-near-monochrome"
+RENDERER_VERSION = "weather-map-v4-near-monochrome"
+OUTPUT_FORMAT_1BPP = "1bpp"
+OUTPUT_FORMAT_GRAY4 = "gray4"
 
 
 @dataclass(frozen=True)
@@ -59,8 +64,10 @@ class RelayConfig:
     timeout_seconds: int
     image_width: int
     image_height: int
+    output_format: str
     annotate_timestamp: bool
     red_timestamp: bool
+    access_log_file: Optional[Path]
 
     @property
     def packed_image_bytes(self) -> int:
@@ -68,6 +75,8 @@ class RelayConfig:
 
     @property
     def payload_image_bytes(self) -> int:
+        if self.output_format == OUTPUT_FORMAT_GRAY4:
+            return (self.image_width * self.image_height) // 4
         if self.annotate_timestamp and self.red_timestamp:
             return self.packed_image_bytes * 2
         return self.packed_image_bytes
@@ -112,16 +121,15 @@ class WeatherMapRelay:
         raw_png = self._http_get(image_url)
         published_at = published_at_from_filename(filename)
         label = display_label_from_published_at(published_at) if self.config.annotate_timestamp else None
-        packed = image_to_packed_1bpp(
+        packed = image_to_display_payload(
             raw_png,
-            self.config.threshold,
-            self.config.image_width,
-            self.config.image_height,
+            self.config,
             label,
-            self.config.red_timestamp,
         )
         digest = hashlib.sha256(packed).hexdigest()
-        planes = ["black", "red"] if label and self.config.red_timestamp else ["black"]
+        planes = ["gray4"] if self.config.output_format == OUTPUT_FORMAT_GRAY4 else ["black"]
+        if self.config.output_format == OUTPUT_FORMAT_1BPP and label and self.config.red_timestamp:
+            planes.append("red")
         manifest = {
             "image_path": BINARY_PATH,
             "source_url": SOURCE_PAGE_URL,
@@ -135,7 +143,9 @@ class WeatherMapRelay:
             "height": self.config.image_height,
             "bytes": len(packed),
             "planes": planes,
-            "renderer_version": RENDERER_VERSION,
+            "format": self.config.output_format,
+            "gray_levels": 4 if self.config.output_format == OUTPUT_FORMAT_GRAY4 else 2,
+            "renderer_version": f"{RENDERER_VERSION}-{self.config.output_format}",
         }
         self._write_cache(manifest, packed)
         return RenderedMap(manifest=manifest, packed=packed)
@@ -184,7 +194,9 @@ class WeatherMapRelay:
             return
         if manifest.get("width") != self.config.image_width or manifest.get("height") != self.config.image_height:
             return
-        if manifest.get("renderer_version") != RENDERER_VERSION:
+        if manifest.get("renderer_version") != f"{RENDERER_VERSION}-{self.config.output_format}":
+            return
+        if manifest.get("format") != self.config.output_format:
             return
         if len(packed) != self.config.payload_image_bytes:
             return
@@ -194,6 +206,24 @@ class WeatherMapRelay:
     def _write_cache(self, manifest: Dict[str, Any], packed: bytes) -> None:
         write_atomic(self.config.cache_dir / "latest.json", json.dumps(manifest, ensure_ascii=False, indent=2).encode())
         write_atomic(self.config.cache_dir / "latest.bin", packed)
+
+
+def image_to_display_payload(
+    raw_image: bytes,
+    config: RelayConfig,
+    label: Optional[str] = None,
+) -> bytes:
+    if config.output_format == OUTPUT_FORMAT_GRAY4:
+        return image_to_packed_gray4(raw_image, config.image_width, config.image_height, label)
+
+    return image_to_packed_1bpp(
+        raw_image,
+        config.threshold,
+        config.image_width,
+        config.image_height,
+        label,
+        config.red_timestamp,
+    )
 
 
 def image_to_packed_1bpp(
@@ -216,6 +246,60 @@ def image_to_packed_1bpp(
         annotate_image(cropped, label)
 
     return pack_1bpp(cropped, threshold, width, height)
+
+
+def image_to_packed_gray4(
+    raw_image: bytes,
+    width: int,
+    height: int,
+    label: Optional[str] = None,
+) -> bytes:
+    cropped = render_cropped_grayscale(raw_image, width, height)
+    if label:
+        annotate_image(cropped, label)
+    return pack_gray4(enhance_weather_map_gray4(cropped), width, height)
+
+
+def enhance_weather_map_gray4(image: Image.Image) -> Image.Image:
+    """Quantize line-art weather maps while keeping the darkest strokes black."""
+    grayscale = image.convert("L")
+    return grayscale.point(gray4_weather_pixel)
+
+
+def gray4_weather_pixel(pixel: int) -> int:
+    if pixel < 112:
+        return 0
+    if pixel < 168:
+        return 64
+    if pixel < 228:
+        return 128
+    return 255
+
+
+def pack_gray4(image: Image.Image, width: int, height: int) -> bytes:
+    grayscale = image.convert("L")
+    pixels = grayscale.load()
+    packed = bytearray((width * height) // 4)
+    for y in range(height):
+        row_offset = y * (width // 4)
+        for x in range(0, width, 4):
+            packed[row_offset + x // 4] = (
+                gray4_code(pixels[x, y])
+                | (gray4_code(pixels[x + 1, y]) >> 2)
+                | (gray4_code(pixels[x + 2, y]) >> 4)
+                | (gray4_code(pixels[x + 3, y]) >> 6)
+            )
+    return bytes(packed)
+
+
+def gray4_code(pixel: int) -> int:
+    if pixel < 32:
+        return 0x00
+    if pixel < 96:
+        return 0x40
+    if pixel < 192:
+        return 0x80
+    return 0xC0
 
 
 def render_cropped_grayscale(raw_image: bytes, width: int, height: int) -> Image.Image:
@@ -353,6 +437,7 @@ def add_boolean_optional_argument(
 class RelayRequestHandler(BaseHTTPRequestHandler):
     server_version = "WeatherMapRelay/0.1"
     relay: WeatherMapRelay
+    logger = logging.getLogger("weather_relay.access")
 
     def do_GET(self) -> None:
         self._handle(send_body=True)
@@ -361,10 +446,11 @@ class RelayRequestHandler(BaseHTTPRequestHandler):
         self._handle(send_body=False)
 
     def log_message(self, fmt: str, *args: Any) -> None:
-        print(f"{self.address_string()} - {fmt % args}")
+        self.logger.info("http_server_message remote=%s message=%s", self._client_ip(), fmt % args)
 
     def _handle(self, send_body: bool) -> None:
         parsed = urlparse(self.path)
+        started_at = time.perf_counter()
         try:
             if parsed.path == MANIFEST_PATH:
                 self._send_manifest(send_body)
@@ -375,7 +461,29 @@ class RelayRequestHandler(BaseHTTPRequestHandler):
             else:
                 self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"}, send_body)
         except Exception as exc:
+            logging.getLogger("weather_relay").exception("request handling failed path=%s", parsed.path)
             self._send_json(HTTPStatus.BAD_GATEWAY, {"error": "upstream_failed", "message": str(exc)}, send_body)
+        finally:
+            elapsed_ms = (time.perf_counter() - started_at) * 1000.0
+            user_agent = self.headers.get("User-Agent", "-").replace("\n", " ").replace("\r", " ")
+            x_forwarded_for = self.headers.get("X-Forwarded-For", "-")
+            self.logger.info(
+                "access method=%s path=%s status=%d bytes=%d duration_ms=%.1f remote=%s xff=%s ua=%s",
+                self.command,
+                parsed.path,
+                getattr(self, "_response_status", 0),
+                getattr(self, "_response_bytes", 0),
+                elapsed_ms,
+                self._client_ip(),
+                x_forwarded_for,
+                json.dumps(user_agent, ensure_ascii=False),
+            )
+
+    def _client_ip(self) -> str:
+        forwarded = self.headers.get("X-Forwarded-For", "")
+        if forwarded:
+            return forwarded.split(",", 1)[0].strip()
+        return self.client_address[0]
 
     def _send_manifest(self, send_body: bool) -> None:
         rendered = self.relay.latest()
@@ -391,6 +499,8 @@ class RelayRequestHandler(BaseHTTPRequestHandler):
         self._send_bytes(status, payload, "application/json; charset=utf-8", send_body)
 
     def _send_bytes(self, status: HTTPStatus, payload: bytes, content_type: str, send_body: bool) -> None:
+        self._response_status = int(status)
+        self._response_bytes = len(payload) if send_body else 0
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(payload)))
@@ -418,6 +528,20 @@ def parse_args() -> RelayConfig:
         type=int,
         default=int(os.environ.get("JMA_RELAY_IMAGE_HEIGHT", str(DEFAULT_IMAGE_HEIGHT))),
     )
+    parser.add_argument(
+        "--output-format",
+        choices=(OUTPUT_FORMAT_GRAY4, OUTPUT_FORMAT_1BPP),
+        default=os.environ.get("JMA_RELAY_OUTPUT_FORMAT"),
+        help="binary payload format; default is gray4 except legacy 640x384 defaults to 1bpp",
+    )
+    parser.add_argument(
+        "--access-log-file",
+        type=Path,
+        default=Path(os.environ["JMA_RELAY_ACCESS_LOG_FILE"]).expanduser()
+        if os.environ.get("JMA_RELAY_ACCESS_LOG_FILE")
+        else None,
+        help="append relay logs to this file",
+    )
     add_boolean_optional_argument(
         parser,
         "--annotate-timestamp",
@@ -441,9 +565,26 @@ def parse_args() -> RelayConfig:
         parser.error("--image-width must be a positive multiple of 8")
     if args.image_height <= 0:
         parser.error("--image-height must be positive")
+    output_format = args.output_format
+    if output_format is None:
+        output_format = (
+            OUTPUT_FORMAT_1BPP
+            if args.image_width == LEGACY_BC_IMAGE_WIDTH and args.image_height == LEGACY_BC_IMAGE_HEIGHT
+            else OUTPUT_FORMAT_GRAY4
+        )
+    if output_format not in {OUTPUT_FORMAT_GRAY4, OUTPUT_FORMAT_1BPP}:
+        parser.error("--output-format must be gray4 or 1bpp")
+    if output_format == OUTPUT_FORMAT_GRAY4 and args.image_width % 4 != 0:
+        parser.error("--image-width must be a multiple of 4 for --output-format gray4")
     red_timestamp = args.red_timestamp
     if red_timestamp is None:
-        red_timestamp = args.image_width == DEFAULT_IMAGE_WIDTH and args.image_height == DEFAULT_IMAGE_HEIGHT
+        red_timestamp = (
+            output_format == OUTPUT_FORMAT_1BPP
+            and args.image_width == LEGACY_BC_IMAGE_WIDTH
+            and args.image_height == LEGACY_BC_IMAGE_HEIGHT
+        )
+    if output_format == OUTPUT_FORMAT_GRAY4 and red_timestamp:
+        parser.error("--red-timestamp is only supported with --output-format 1bpp")
 
     return RelayConfig(
         bind=args.bind,
@@ -454,13 +595,29 @@ def parse_args() -> RelayConfig:
         timeout_seconds=args.timeout_seconds,
         image_width=args.image_width,
         image_height=args.image_height,
+        output_format=output_format,
         annotate_timestamp=args.annotate_timestamp,
         red_timestamp=red_timestamp,
+        access_log_file=args.access_log_file,
+    )
+
+
+def configure_logging(config: RelayConfig) -> None:
+    handlers: list[logging.Handler] = [logging.StreamHandler()]
+    if config.access_log_file is not None:
+        config.access_log_file.parent.mkdir(parents=True, exist_ok=True)
+        handlers.append(logging.FileHandler(config.access_log_file, encoding="utf-8"))
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+        datefmt="%Y-%m-%dT%H:%M:%S%z",
+        handlers=handlers,
     )
 
 
 def main() -> None:
     config = parse_args()
+    configure_logging(config)
     relay = WeatherMapRelay(config)
 
     class Handler(RelayRequestHandler):
@@ -472,8 +629,11 @@ def main() -> None:
     print(f"manifest: {MANIFEST_PATH}")
     print(f"binary:   {BINARY_PATH}")
     print(f"image:    {config.image_width}x{config.image_height} ({config.payload_image_bytes} bytes)")
+    print(f"format:   {config.output_format}")
     print(f"label:    {'enabled' if config.annotate_timestamp else 'disabled'}")
     print(f"red text: {'enabled' if config.red_timestamp else 'disabled'}")
+    if config.access_log_file is not None:
+        print(f"access logs: {config.access_log_file}")
     server.serve_forever()
 
 

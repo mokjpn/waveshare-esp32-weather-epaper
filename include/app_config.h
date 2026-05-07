@@ -8,6 +8,9 @@ constexpr char kDeviceName[]                  = "waveshare-esp32-weather-epaper"
 constexpr char kFirmwareVersion[]             = "0.1.0";
 constexpr char kTimezone[]                    = "JST-9";
 constexpr uint32_t kWifiConnectTimeoutMs      = 20000;
+constexpr uint8_t kWifiConnectRetryCount      = 3;
+constexpr uint32_t kWifiRetryIntervalMs       = 2000;
+constexpr uint32_t kWifiRadioResetDelayMs     = 300;
 constexpr uint32_t kHttpTimeoutMs             = 30000;
 constexpr uint8_t kHttpRetryCount             = 3;
 constexpr uint32_t kHttpRetryDelayMs          = 1000;
@@ -30,6 +33,20 @@ constexpr bool kEpdAggressiveClear =
 #else
     false;
 #endif
+constexpr bool kEpdFourGray =
+#if defined(APP_EPD_7IN5BC) || defined(APP_EPD_1BPP)
+    false;
+#else
+    true;
+#endif
+constexpr char kPanelName[] =
+#if defined(APP_EPD_7IN5BC)
+    "Waveshare 7.5inch e-Paper (B) legacy 640x384";
+#elif defined(APP_EPD_1BPP)
+    "Waveshare 7.5inch e-Paper V2 black/white 800x480 1bpp";
+#else
+    "Waveshare 7.5inch e-Paper V2 black/white 800x480 4-gray";
+#endif
 constexpr uint16_t kImageWidth =
 #if defined(APP_EPD_7IN5BC)
     640;
@@ -43,11 +60,14 @@ constexpr uint16_t kImageHeight =
     480;
 #endif
 constexpr uint32_t kPackedImageBytes          = (kImageWidth * kImageHeight) / 8;
+constexpr uint32_t kGray4ImageBytes           = (kImageWidth * kImageHeight) / 4;
 constexpr uint32_t kImagePayloadBytes =
 #if defined(APP_EPD_7IN5BC)
     kPackedImageBytes * 2;
-#else
+#elif defined(APP_EPD_1BPP)
     kPackedImageBytes;
+#else
+    kGray4ImageBytes;
 #endif
 constexpr bool kMqttEnabled                   = true;
 

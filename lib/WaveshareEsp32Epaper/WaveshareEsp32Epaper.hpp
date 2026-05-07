@@ -24,6 +24,8 @@ private:
     void waitUntilIdle();
     void turnOnDisplay();
     void initPanel();
+    void initPanel4Gray();
+    void writeGray4Planes(const std::vector<uint8_t>& image);
     void turnOnDisplayBc();
     void initPanelBc();
     void clearPanelBc();

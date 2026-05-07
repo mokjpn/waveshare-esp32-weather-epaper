@@ -6,8 +6,8 @@ weather-map e-paper display.
 This repository targets:
 
 - Waveshare e-Paper ESP32 Driver Board
-- Older Waveshare 7.5inch e-Paper (B) raw panel, rear label
-  `X02R/171213-180502`
+- Newer Waveshare 7.5inch e-Paper black/white raw panel, `800x480`,
+  4-level grayscale
 - Japan Meteorological Agency weather map source data
 - A small Python relay server that prepares panel-ready packed bitmap data
 
@@ -17,14 +17,15 @@ This repository targets:
 2. Connects to Wi-Fi.
 3. Synchronizes time with NTP.
 4. Fetches a processed weather-map manifest and binary image from the relay.
-5. Sends black and red planes to the e-paper panel over SPI.
+5. Sends a packed 4-level grayscale weather map to the e-paper panel over SPI.
 6. Publishes status events to MQTT.
 7. Turns off Wi-Fi/Bluetooth and enters deep sleep.
 
-The active firmware environment is `waveshare_esp32_epd_7in5bc`, which uses the
-older `7in5bc` `640x384` panel path. The relay defaults to two packed `1bpp`
-planes: black first, red second. The red plane is used for the source timestamp
-label.
+The default firmware environment is `waveshare_esp32_epd`, which uses the newer
+`800x480` panel's 4-gray update path. The relay defaults to `gray4` output:
+one packed `800x480`, 2bpp payload of `96000` bytes. The darkest source strokes
+are forced to black, with intermediate grays used for lighter map lines and
+antialiasing.
 
 ## Repository Contents
 
@@ -57,20 +58,25 @@ Then edit `include/app_secrets.h` with your local values.
 Install PlatformIO, then run:
 
 ```sh
-PLATFORMIO_CORE_DIR=/tmp/pio-core pio run -e waveshare_esp32_epd_7in5bc
+PLATFORMIO_CORE_DIR=/tmp/pio-core pio run
 ```
 
 Diagnostic stripe-pattern firmware:
 
 ```sh
-PLATFORMIO_CORE_DIR=/tmp/pio-core pio run -e waveshare_esp32_epd_7in5bc_diag
+PLATFORMIO_CORE_DIR=/tmp/pio-core pio run -e waveshare_esp32_epd_diag
 ```
 
 Upload example:
 
 ```sh
-PLATFORMIO_CORE_DIR=/tmp/pio-core pio run -e waveshare_esp32_epd_7in5bc -t upload --upload-port /dev/tty.usbmodemXXXX
+PLATFORMIO_CORE_DIR=/tmp/pio-core pio run -e waveshare_esp32_epd -t upload --upload-port /dev/tty.usbmodemXXXX
 ```
+
+Fallback build targets:
+
+- `waveshare_esp32_epd_1bpp` - newer `800x480` panel with the older 1bpp black/white payload contract
+- `waveshare_esp32_epd_7in5bc` - legacy `640x384` Waveshare 7.5inch e-Paper (B), rear label `X02R/171213-180502`
 
 ## Run Relay Server
 
@@ -82,11 +88,17 @@ pip install -r requirements.txt
 python3 weather_relay.py --bind 0.0.0.0 --port 8080
 ```
 
-The relay defaults to `640x384` for the older panel. To serve a newer
-`800x480` panel instead:
+The relay defaults to `800x480` `gray4` output for the newer panel. To serve the
+newer panel with the older 1bpp black/white contract instead:
 
 ```sh
-python3 weather_relay.py --bind 0.0.0.0 --port 8080 --image-width 800 --image-height 480
+python3 weather_relay.py --bind 0.0.0.0 --port 8080 --output-format 1bpp
+```
+
+For the legacy `640x384` panel path:
+
+```sh
+python3 weather_relay.py --bind 0.0.0.0 --port 8080 --image-width 640 --image-height 384
 ```
 
 ## Case Files
@@ -109,6 +121,8 @@ USB-A-to-USB-C cable.
   `DIN=GPIO14`, `SCLK=GPIO13`, `CS=GPIO15`, `DC=GPIO27`, `RST=GPIO26`,
   `BUSY=GPIO25`.
 - Firmware controls driver-board `LED1` through `GPIO2` while awake.
+- The default newer-panel path uses Waveshare's `epd7in5_V2` 4-gray update
+  sequence.
 - The older `7in5bc` path performs a clear refresh before drawing to reduce
   ghosting.
 - The raw panel is fragile. Confirm FPC orientation, driver-board DIP switches,
@@ -124,8 +138,7 @@ e-paper 表示機用ファームウェア、リレーサーバー、3Dプリン�
 対象ハードウェア:
 
 - Waveshare e-Paper ESP32 Driver Board
-- 古い Waveshare 7.5inch e-Paper (B) 生パネル、背面ラベル
-  `X02R/171213-180502`
+- 新しい Waveshare 7.5inch e-Paper 黒白生パネル、`800x480`、4階調対応
 - 気象庁の天気図データ
 - パネルにそのまま送れるビットマップへ変換する Python リレーサーバー
 
@@ -135,14 +148,14 @@ e-paper 表示機用ファームウェア、リレーサーバー、3Dプリン�
 2. Wi-Fi に接続します。
 3. NTP で時刻同期します。
 4. リレーサーバーから処理済み天気図の manifest とバイナリ画像を取得します。
-5. SPI 経由で e-paper パネルへ黒・赤の2プレーンを書き込みます。
+5. SPI 経由で e-paper パネルへ4階調の天気図を書き込みます。
 6. MQTT に状態イベントを送信します。
 7. Wi-Fi/Bluetooth を停止して deep sleep に入ります。
 
-通常使用する PlatformIO 環境は `waveshare_esp32_epd_7in5bc` です。古い
-`7in5bc` 系パネル向けに `640x384` として扱います。リレーサーバーは標準で
-黒プレーン、赤プレーンの順に `1bpp` パック済みデータを返し、赤プレーンには
-元画像の時刻ラベルを描画します。
+通常使用する PlatformIO 環境は `waveshare_esp32_epd` です。新しい
+`800x480` パネルの4階調更新経路を使います。リレーサーバーは標準で `gray4`
+出力になっており、`800x480`、2bpp、`96000` bytes のペイロードを返します。
+濃い線は黒に固定し、薄い地図線やアンチエイリアスは中間グレーとして残します。
 
 ## 含まれるもの
 
@@ -174,20 +187,25 @@ cp include/app_secrets.example.h include/app_secrets.h
 PlatformIO をインストールした上で実行します。
 
 ```sh
-PLATFORMIO_CORE_DIR=/tmp/pio-core pio run -e waveshare_esp32_epd_7in5bc
+PLATFORMIO_CORE_DIR=/tmp/pio-core pio run
 ```
 
 縦縞パターンの診断用ファームウェア:
 
 ```sh
-PLATFORMIO_CORE_DIR=/tmp/pio-core pio run -e waveshare_esp32_epd_7in5bc_diag
+PLATFORMIO_CORE_DIR=/tmp/pio-core pio run -e waveshare_esp32_epd_diag
 ```
 
 アップロード例:
 
 ```sh
-PLATFORMIO_CORE_DIR=/tmp/pio-core pio run -e waveshare_esp32_epd_7in5bc -t upload --upload-port /dev/tty.usbmodemXXXX
+PLATFORMIO_CORE_DIR=/tmp/pio-core pio run -e waveshare_esp32_epd -t upload --upload-port /dev/tty.usbmodemXXXX
 ```
+
+退避用のビルドターゲット:
+
+- `waveshare_esp32_epd_1bpp` - 新しい `800x480` パネルを従来の1bpp黒白ペイロードで使う
+- `waveshare_esp32_epd_7in5bc` - 旧 `640x384` Waveshare 7.5inch e-Paper (B)、背面ラベル `X02R/171213-180502`
 
 ## リレーサーバーの起動
 
@@ -199,11 +217,17 @@ pip install -r requirements.txt
 python3 weather_relay.py --bind 0.0.0.0 --port 8080
 ```
 
-標準では古いパネル向けに `640x384` を返します。新しい `800x480` パネル向けに
-する場合は次のように指定します。
+標準では新しいパネル向けに `800x480` `gray4` を返します。新しいパネルを
+従来の1bpp黒白ペイロードで使う場合は次のように指定します。
 
 ```sh
-python3 weather_relay.py --bind 0.0.0.0 --port 8080 --image-width 800 --image-height 480
+python3 weather_relay.py --bind 0.0.0.0 --port 8080 --output-format 1bpp
+```
+
+旧 `640x384` パネル向けは次のように指定します。
+
+```sh
+python3 weather_relay.py --bind 0.0.0.0 --port 8080 --image-width 640 --image-height 384
 ```
 
 ## ケースファイル
@@ -225,6 +249,7 @@ openscad -D 'part="back_battery"' -o cad/waveshare_7in5b_back_battery.stl cad/wa
   `DIN=GPIO14`, `SCLK=GPIO13`, `CS=GPIO15`, `DC=GPIO27`, `RST=GPIO26`,
   `BUSY=GPIO25`
 - ファームウェアは起床中だけ `GPIO2` 経由でドライバーボードの `LED1` を点灯します。
+- 標準の新パネル経路では、Waveshare `epd7in5_V2` の4階調更新シーケンスを使います。
 - 古い `7in5bc` パネルでは、ゴースト低減のため描画前に白クリアを行います。
 - 生パネルは薄く破損しやすいため、FPC の向き、DIPスイッチ、ケースクリアランスを
   最終組み立て前に確認してください。

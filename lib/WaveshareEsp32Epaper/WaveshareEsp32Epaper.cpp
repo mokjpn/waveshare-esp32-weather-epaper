@@ -143,6 +143,33 @@ void WaveshareEsp32Epaper::initPanel()
     sendData(0x00);
 }
 
+void WaveshareEsp32Epaper::initPanel4Gray()
+{
+    reset();
+
+    sendCommand(0x00);  // PANEL SETTING
+    sendData(0x1F);
+
+    sendCommand(0x50);  // VCOM AND DATA INTERVAL SETTING
+    sendData(0x10);
+    sendData(0x07);
+
+    sendCommand(0x04);  // POWER ON
+    delay(100);
+    waitUntilIdle();
+
+    sendCommand(0x06);  // BOOSTER SOFT START
+    sendData(0x27);
+    sendData(0x27);
+    sendData(0x18);
+    sendData(0x17);
+
+    sendCommand(0xE0);
+    sendData(0x02);
+    sendCommand(0xE5);
+    sendData(0x5F);
+}
+
 void WaveshareEsp32Epaper::initPanelBc()
 {
     reset();
@@ -183,6 +210,55 @@ void WaveshareEsp32Epaper::initPanelBc()
 
     sendCommand(0xE5);  // FLASH MODE
     sendData(0x03);
+}
+
+void WaveshareEsp32Epaper::writeGray4Planes(const std::vector<uint8_t>& image)
+{
+    Serial.println("[epd] sending 4-gray old plane");
+    sendCommand(0x10);
+    for (uint32_t i = 0; i < app::kPackedImageBytes; ++i) {
+        uint8_t out = 0;
+        for (uint8_t j = 0; j < 2; ++j) {
+            uint8_t src = image[i * 2 + j];
+            for (uint8_t k = 0; k < 2; ++k) {
+                const uint8_t p0 = src & 0xC0;
+                out |= (p0 == 0x00 || p0 == 0x80) ? 0x01 : 0x00;
+                out <<= 1;
+                src <<= 2;
+
+                const uint8_t p1 = src & 0xC0;
+                out |= (p1 == 0x00 || p1 == 0x80) ? 0x01 : 0x00;
+                if (j != 1 || k != 1) {
+                    out <<= 1;
+                }
+                src <<= 2;
+            }
+        }
+        sendData(out);
+    }
+
+    Serial.println("[epd] sending 4-gray new plane");
+    sendCommand(0x13);
+    for (uint32_t i = 0; i < app::kPackedImageBytes; ++i) {
+        uint8_t out = 0;
+        for (uint8_t j = 0; j < 2; ++j) {
+            uint8_t src = image[i * 2 + j];
+            for (uint8_t k = 0; k < 2; ++k) {
+                const uint8_t p0 = src & 0xC0;
+                out |= (p0 == 0x00 || p0 == 0x40) ? 0x01 : 0x00;
+                out <<= 1;
+                src <<= 2;
+
+                const uint8_t p1 = src & 0xC0;
+                out |= (p1 == 0x00 || p1 == 0x40) ? 0x01 : 0x00;
+                if (j != 1 || k != 1) {
+                    out <<= 1;
+                }
+                src <<= 2;
+            }
+        }
+        sendData(out);
+    }
 }
 
 void WaveshareEsp32Epaper::fillPanelBc(uint8_t packedPixels, const char* label)
@@ -231,6 +307,10 @@ bool WaveshareEsp32Epaper::markedPixelAt(
 WaveshareEsp32Epaper::Result WaveshareEsp32Epaper::writeImage(const std::vector<uint8_t>& image)
 {
     Result result;
+    if (app::kEpdFourGray && image.size() != app::kImagePayloadBytes) {
+        result.message = "invalid 4-gray image size";
+        return result;
+    }
     if (image.size() != app::kPackedImageBytes && image.size() != app::kImagePayloadBytes) {
         result.message = "invalid image size";
         return result;
@@ -266,6 +346,19 @@ WaveshareEsp32Epaper::Result WaveshareEsp32Epaper::writeImage(const std::vector<
     result.message = "spi 7in5bc update complete";
     return result;
 #else
+    if (app::kEpdFourGray) {
+        initPanel4Gray();
+        Serial.println("[epd] sending 4-gray image");
+        writeGray4Planes(image);
+        Serial.println("[epd] refreshing 4-gray");
+        turnOnDisplay();
+        sleep();
+
+        result.ok = true;
+        result.message = "spi 4-gray update complete";
+        return result;
+    }
+
     initPanel();
 
     Serial.println("[epd] sending black plane");
@@ -274,7 +367,7 @@ WaveshareEsp32Epaper::Result WaveshareEsp32Epaper::writeImage(const std::vector<
         sendData(value);
     }
 
-    Serial.println("[epd] sending red plane as white");
+    Serial.println("[epd] sending auxiliary plane as white");
     sendCommand(0x92);
     sendCommand(0x13);
     sendRepeated(0x00, app::kPackedImageBytes);

@@ -35,6 +35,57 @@ WiFiClient wifiClient;
 PubSubClient mqttClient(wifiClient);
 WaveshareEsp32Epaper epaper;
 
+struct WifiFailureBacklog {
+    uint32_t magic{};
+    uint32_t failureCount{};
+    int32_t lastStatus{-1};
+    time_t lastFailureEpoch{};
+    uint32_t lastFailureMillis{};
+};
+
+constexpr uint32_t kWifiFailureBacklogMagic = 0x57494642UL;
+RTC_DATA_ATTR WifiFailureBacklog gWifiFailureBacklog;
+
+void ensureWifiFailureBacklogInitialized()
+{
+    if (gWifiFailureBacklog.magic == kWifiFailureBacklogMagic) {
+        return;
+    }
+    gWifiFailureBacklog.magic = kWifiFailureBacklogMagic;
+    gWifiFailureBacklog.failureCount = 0;
+    gWifiFailureBacklog.lastStatus = -1;
+    gWifiFailureBacklog.lastFailureEpoch = 0;
+    gWifiFailureBacklog.lastFailureMillis = 0;
+}
+
+String formatEventTimeString(time_t epoch, uint32_t millisFallback)
+{
+    if (epoch > 100000) {
+        struct tm utcTm {};
+        gmtime_r(&epoch, &utcTm);
+        char buffer[32];
+        strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%SZ", &utcTm);
+        return String(buffer);
+    }
+
+    const auto fallback = millisFallback > 0 ? millisFallback : millis();
+    return String("unsynced-millis-") + String(fallback);
+}
+
+String nowEventTimeString()
+{
+    return formatEventTimeString(time(nullptr), millis());
+}
+
+void recordWifiFailure(int32_t wifiStatus)
+{
+    ensureWifiFailureBacklogInitialized();
+    gWifiFailureBacklog.failureCount += 1;
+    gWifiFailureBacklog.lastStatus = wifiStatus;
+    gWifiFailureBacklog.lastFailureEpoch = time(nullptr);
+    gWifiFailureBacklog.lastFailureMillis = millis();
+}
+
 void beep(uint16_t freq, uint32_t duration)
 {
     (void)freq;
@@ -89,6 +140,7 @@ void publishEvent(const char* event, const char* status, const String& message, 
     doc["event"]    = event;
     doc["status"]   = status;
     doc["message"]  = message;
+    doc["event_time"] = nowEventTimeString();
     doc["heap"]     = ESP.getFreeHeap();
     doc["millis"]   = millis();
     if (extra) {
@@ -103,20 +155,61 @@ void publishEvent(const char* event, const char* status, const String& message, 
     mqttClient.publish(APP_MQTT_TOPIC_BASE "/events", reinterpret_cast<const uint8_t*>(payload), len);
 }
 
+void publishWifiFailureBacklogIfAny()
+{
+    ensureWifiFailureBacklogInitialized();
+    if (!app::kMqttEnabled || !mqttClient.connected()) {
+        return;
+    }
+    if (gWifiFailureBacklog.failureCount == 0) {
+        return;
+    }
+
+    StaticJsonDocument<384> extra;
+    extra["count"] = gWifiFailureBacklog.failureCount;
+    extra["last_status"] = gWifiFailureBacklog.lastStatus;
+    extra["last_failed_at"] =
+        formatEventTimeString(gWifiFailureBacklog.lastFailureEpoch, gWifiFailureBacklog.lastFailureMillis);
+    extra["persisted"] = "rtc";
+    publishEvent("wifi_failure_backlog", "warn", "deferred wifi failures observed", &extra);
+
+    gWifiFailureBacklog.failureCount = 0;
+    gWifiFailureBacklog.lastStatus = -1;
+    gWifiFailureBacklog.lastFailureEpoch = 0;
+    gWifiFailureBacklog.lastFailureMillis = 0;
+}
+
 bool connectWifi()
 {
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(APP_WIFI_SSID, APP_WIFI_PASSWORD);
-    const auto start = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - start < app::kWifiConnectTimeoutMs) {
-        delay(250);
+    WiFi.persistent(false);
+    for (uint8_t attempt = 1; attempt <= app::kWifiConnectRetryCount; ++attempt) {
+        WiFi.disconnect(true);
+        WiFi.mode(WIFI_OFF);
+        delay(app::kWifiRadioResetDelayMs);
+
+        WiFi.mode(WIFI_STA);
+        delay(app::kWifiRadioResetDelayMs);
+        WiFi.begin(APP_WIFI_SSID, APP_WIFI_PASSWORD);
+        Serial.printf("[wifi] connect attempt=%u/%u\n", attempt, app::kWifiConnectRetryCount);
+
+        const auto start = millis();
+        while (WiFi.status() != WL_CONNECTED && millis() - start < app::kWifiConnectTimeoutMs) {
+            delay(250);
+        }
+        if (WiFi.status() == WL_CONNECTED) {
+            Serial.printf("[wifi] connected ip=%s\n", WiFi.localIP().toString().c_str());
+            return true;
+        }
+
+        Serial.printf("[wifi] attempt=%u failed status=%d\n", attempt, static_cast<int>(WiFi.status()));
+        if (attempt < app::kWifiConnectRetryCount) {
+            delay(app::kWifiRetryIntervalMs);
+        }
     }
-    if (WiFi.status() != WL_CONNECTED) {
-        Serial.println("[wifi] connect failed");
-        return false;
-    }
-    Serial.printf("[wifi] connected ip=%s\n", WiFi.localIP().toString().c_str());
-    return true;
+
+    recordWifiFailure(static_cast<int32_t>(WiFi.status()));
+    Serial.println("[wifi] connect failed after retries");
+    return false;
 }
 
 bool connectMqtt()
@@ -242,10 +335,15 @@ bool fetchPackedImage(const Manifest& manifest, std::vector<uint8_t>& image)
 
     const int length = http.getSize();
     const bool knownLength = length > 0;
-    const bool acceptedLength =
-        knownLength &&
-        (static_cast<uint32_t>(length) == app::kPackedImageBytes ||
-         static_cast<uint32_t>(length) == app::kImagePayloadBytes);
+    bool acceptedLength = false;
+    if (knownLength) {
+        const auto imageBytes = static_cast<uint32_t>(length);
+        if (app::kEpdFourGray) {
+            acceptedLength = imageBytes == app::kImagePayloadBytes;
+        } else {
+            acceptedLength = imageBytes == app::kPackedImageBytes || imageBytes == app::kImagePayloadBytes;
+        }
+    }
     if (knownLength && !acceptedLength) {
         Serial.printf("[http] image size mismatch %d\n", length);
         http.end();
@@ -350,6 +448,28 @@ bool beginDevice()
 #if defined(APP_EPD_DIAGNOSTIC)
 std::vector<uint8_t> makeDiagnosticImage()
 {
+    if (app::kEpdFourGray) {
+        std::vector<uint8_t> image(app::kGray4ImageBytes, 0xFF);
+        constexpr uint16_t bytesPerRow = app::kImageWidth / 4;
+        for (uint16_t y = 0; y < app::kImageHeight; ++y) {
+            for (uint16_t xByte = 0; xByte < bytesPerRow; ++xByte) {
+                const uint16_t x = xByte * 4;
+                const uint8_t shade = (x / 80) % 4;
+                uint8_t pixel = 0xC0;
+                if (shade == 0) {
+                    pixel = 0x00;
+                } else if (shade == 1) {
+                    pixel = 0x40;
+                } else if (shade == 2) {
+                    pixel = 0x80;
+                }
+                image[y * bytesPerRow + xByte] =
+                    pixel | (pixel >> 2) | (pixel >> 4) | (pixel >> 6);
+            }
+        }
+        return image;
+    }
+
     std::vector<uint8_t> image(app::kPackedImageBytes, 0xFF);
     constexpr uint16_t bytesPerRow = app::kImageWidth / 8;
     for (uint16_t y = 0; y < app::kImageHeight; ++y) {
@@ -397,7 +517,7 @@ UpdateResult performUpdate()
     updateInfo["source_url"] = manifest.sourceUrl;
     updateInfo["published"]  = manifest.sourcePublishedAt;
     updateInfo["transport"]  = "SPI";
-    updateInfo["panel"]      = "7.5inch e-Paper (B) V2";
+    updateInfo["panel"]      = app::kPanelName;
 
     if (!result.ok) {
         publishEvent("epaper_update", "error", result.message, &updateInfo);
@@ -417,6 +537,7 @@ void setup()
 {
     Serial.begin(115200);
     delay(300);
+    ensureWifiFailureBacklogInitialized();
     beginDevice();
     setStatusLed(true);
 
@@ -431,6 +552,7 @@ void setup()
         retryLater("wifi connect failed", app::kNetworkRetryDelaySeconds);
     }
     connectMqtt();
+    publishWifiFailureBacklogIfAny();
     if (!syncTime()) {
         retryLater("time sync failed");
     }
