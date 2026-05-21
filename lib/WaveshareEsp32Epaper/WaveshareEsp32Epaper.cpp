@@ -107,18 +107,24 @@ void WaveshareEsp32Epaper::initPanel()
 {
     reset();
 
+    sendCommand(0x06);  // BOOSTER SOFT START
+    sendData(0x17);
+    sendData(0x17);
+    sendData(0x28);
+    sendData(0x17);
+
     sendCommand(0x01);  // POWER SETTING
     sendData(0x07);
     sendData(0x07);
-    sendData(0x3f);
-    sendData(0x3f);
+    sendData(0x28);
+    sendData(0x17);
 
     sendCommand(0x04);  // POWER ON
     delay(100);
     waitUntilIdle();
 
     sendCommand(0x00);  // PANEL SETTING
-    sendData(0x0F);
+    sendData(0x1F);
 
     sendCommand(0x61);  // RESOLUTION SETTING: 800 x 480
     sendData(0x03);
@@ -130,7 +136,7 @@ void WaveshareEsp32Epaper::initPanel()
     sendData(0x00);
 
     sendCommand(0x50);  // VCOM AND DATA INTERVAL SETTING
-    sendData(0x11);
+    sendData(0x10);
     sendData(0x07);
 
     sendCommand(0x60);  // TCON SETTING
@@ -261,6 +267,16 @@ void WaveshareEsp32Epaper::writeGray4Planes(const std::vector<uint8_t>& image)
     }
 }
 
+void WaveshareEsp32Epaper::clearPanelV2White()
+{
+    Serial.println("[epd] clearing V2 panel to white");
+    sendCommand(0x10);
+    sendRepeated(0xFF, app::kPackedImageBytes);
+    sendCommand(0x13);
+    sendRepeated(0x00, app::kPackedImageBytes);
+    turnOnDisplay();
+}
+
 void WaveshareEsp32Epaper::fillPanelBc(uint8_t packedPixels, const char* label)
 {
     Serial.printf("[epd] 7in5bc fill %s\n", label);
@@ -347,6 +363,11 @@ WaveshareEsp32Epaper::Result WaveshareEsp32Epaper::writeImage(const std::vector<
     return result;
 #else
     if (app::kEpdFourGray) {
+        if (app::kEpdGray4ClearBeforeUpdate) {
+            initPanel();
+            clearPanelV2White();
+            delay(500);
+        }
         initPanel4Gray();
         Serial.println("[epd] sending 4-gray image");
         writeGray4Planes(image);
@@ -361,23 +382,24 @@ WaveshareEsp32Epaper::Result WaveshareEsp32Epaper::writeImage(const std::vector<
 
     initPanel();
 
-    Serial.println("[epd] sending black plane");
+    Serial.println("[epd] sending 1bpp old plane");
     sendCommand(0x10);
     for (auto value : image) {
         sendData(value);
     }
 
-    Serial.println("[epd] sending auxiliary plane as white");
-    sendCommand(0x92);
+    Serial.println("[epd] sending 1bpp new plane");
     sendCommand(0x13);
-    sendRepeated(0x00, app::kPackedImageBytes);
+    for (auto value : image) {
+        sendData(~value);
+    }
 
-    Serial.println("[epd] refreshing");
+    Serial.println("[epd] refreshing 1bpp");
     turnOnDisplay();
     sleep();
 
     result.ok = true;
-    result.message = "spi update complete";
+    result.message = "spi 1bpp update complete";
     return result;
 #endif
 }

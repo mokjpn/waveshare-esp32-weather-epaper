@@ -33,6 +33,12 @@ constexpr bool kEpdAggressiveClear =
 #else
     false;
 #endif
+constexpr bool kEpdGray4ClearBeforeUpdate =
+#if defined(APP_EPD_7IN5BC) || defined(APP_EPD_1BPP)
+    false;
+#else
+    true;
+#endif
 constexpr bool kEpdFourGray =
 #if defined(APP_EPD_7IN5BC) || defined(APP_EPD_1BPP)
     false;
