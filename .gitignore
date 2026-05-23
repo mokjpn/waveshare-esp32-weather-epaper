@@ -5,6 +5,7 @@ include/app_secrets.h
 AGENTS.md
 AGNETS.md
 HANDOFF.md
+docs/*.HEIC
 cad/waveshare_7in5b_back_battery.3mf
 lib/UnitNfcTransport/
 lib/WaveshareNfcEpaper/

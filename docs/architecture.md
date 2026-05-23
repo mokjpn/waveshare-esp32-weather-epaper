@@ -27,12 +27,18 @@ This PoC targets these hardware and runtime assumptions.
 
 ## Schedule
 
-The schedule is fixed in JST.
+The schedule is fixed in JST and follows the JMA weather-map observation cadence.
+JMA maps are published roughly 2 hours and 10 minutes after the observation time,
+so each scheduled run normally fetches the map from the previous 3-hour observation.
 
-- 00:30
-- 06:30
-- 12:30
-- 18:30
+- 00:00
+- 03:00
+- 06:00
+- 09:00
+- 12:00
+- 15:00
+- 18:00
+- 21:00
 
 Wi-Fi and relay image-fetch failures retry after 10 minutes. Other update failures retry after 5 minutes. MQTT failures are non-fatal.
 The relay's default upstream/render cache TTL is 300 seconds.

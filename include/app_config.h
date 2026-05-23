@@ -77,8 +77,8 @@ constexpr uint32_t kImagePayloadBytes =
 #endif
 constexpr bool kMqttEnabled                   = true;
 
-constexpr int kScheduleHours[] = {0, 6, 12, 18};
-constexpr int kScheduleMinute = 30;
+constexpr int kScheduleHours[] = {0, 3, 6, 9, 12, 15, 18, 21};
+constexpr int kScheduleMinute = 0;
 
 constexpr char kManifestPath[] = "/api/weather-map/latest.json";
 
