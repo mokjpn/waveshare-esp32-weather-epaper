@@ -3,6 +3,10 @@
 Firmware, relay server, and 3D-printable case files for a battery-powered
 weather-map e-paper display.
 
+Sample decoded relay output:
+
+![Decoded 4-gray JMA weather map sample](docs/sample-weather-map-gray4.png)
+
 This repository targets:
 
 - Waveshare e-Paper ESP32 Driver Board
@@ -134,6 +138,10 @@ USB-A-to-USB-C cable.
 
 Waveshare ESP32 e-Paper Driver Board を使った、バッテリー駆動の天気図
 e-paper 表示機用ファームウェア、リレーサーバー、3Dプリント用ケースファイルです。
+
+リレーサーバーが返す4階調データをデコードしたサンプル:
+
+![4階調に変換した気象庁天気図のサンプル](docs/sample-weather-map-gray4.png)
 
 対象ハードウェア:
 
