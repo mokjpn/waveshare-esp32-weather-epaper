@@ -41,6 +41,8 @@ so each scheduled run normally fetches the map from the previous 3-hour observat
 - 21:00
 
 Wi-Fi and relay image-fetch failures retry after 10 minutes. Other update failures retry after 5 minutes. MQTT failures are non-fatal.
+An image transfer that makes no receive progress for 30 seconds is aborted and treated as a relay image-fetch failure.
+Wi-Fi modem sleep is disabled while the device is awake to reduce the chance of stalled image transfers.
 The relay's default upstream/render cache TTL is 300 seconds.
 
 ## Relay Server Contract

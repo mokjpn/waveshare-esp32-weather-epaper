@@ -12,6 +12,7 @@ constexpr uint8_t kWifiConnectRetryCount      = 3;
 constexpr uint32_t kWifiRetryIntervalMs       = 2000;
 constexpr uint32_t kWifiRadioResetDelayMs     = 300;
 constexpr uint32_t kHttpTimeoutMs             = 30000;
+constexpr uint32_t kHttpReceiveIdleTimeoutMs  = 30000;
 constexpr uint8_t kHttpRetryCount             = 3;
 constexpr uint32_t kHttpRetryDelayMs          = 1000;
 constexpr uint32_t kMqttSocketTimeoutSeconds  = 10;

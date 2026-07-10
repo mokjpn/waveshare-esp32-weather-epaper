@@ -188,6 +188,7 @@ bool connectWifi()
         delay(app::kWifiRadioResetDelayMs);
 
         WiFi.mode(WIFI_STA);
+        WiFi.setSleep(false);
         delay(app::kWifiRadioResetDelayMs);
         WiFi.begin(APP_WIFI_SSID, APP_WIFI_PASSWORD);
         Serial.printf("[wifi] connect attempt=%u/%u\n", attempt, app::kWifiConnectRetryCount);
@@ -197,7 +198,8 @@ bool connectWifi()
             delay(250);
         }
         if (WiFi.status() == WL_CONNECTED) {
-            Serial.printf("[wifi] connected ip=%s\n", WiFi.localIP().toString().c_str());
+            Serial.printf("[wifi] connected ip=%s rssi=%d sleep=off\n", WiFi.localIP().toString().c_str(),
+                          WiFi.RSSI());
             return true;
         }
 
@@ -354,15 +356,28 @@ bool fetchPackedImage(const Manifest& manifest, std::vector<uint8_t>& image)
     image.assign(expectedSize, 0xFF);
     auto* stream = http.getStreamPtr();
     size_t offset{};
-    while (http.connected() && offset < image.size()) {
+    uint32_t lastProgressAt = millis();
+    while (offset < image.size()) {
         const auto available = stream->available();
-        if (!available) {
-            delay(1);
-            continue;
+        if (available) {
+            const auto chunk = std::min<size_t>(available, image.size() - offset);
+            const auto read  = stream->readBytes(reinterpret_cast<char*>(image.data() + offset), chunk);
+            if (read > 0) {
+                offset += read;
+                lastProgressAt = millis();
+                continue;
+            }
         }
-        const auto chunk = std::min<size_t>(available, image.size() - offset);
-        const auto read  = stream->readBytes(reinterpret_cast<char*>(image.data() + offset), chunk);
-        offset += read;
+
+        if (!http.connected()) {
+            break;
+        }
+        if (millis() - lastProgressAt >= app::kHttpReceiveIdleTimeoutMs) {
+            Serial.printf("[http] image receive idle timeout at %u / %u bytes\n",
+                          static_cast<unsigned>(offset), static_cast<unsigned>(image.size()));
+            break;
+        }
+        delay(10);
     }
     http.end();
     if (offset != image.size()) {
